@@ -37,14 +37,15 @@ TinyGPSPlus gps;
 #include <SPI.h>
 #include <WiFi101.h>
 #include <PubSubClient.h>
+#include "arduino_secrets.h"
 
 // Update these with values suitable for your hardware/network.
 byte mac[]    = {  0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xEE };
 IPAddress server(192, 168, 1, 171);
 
 // WiFi card example
-char ssid[] = "";    // your SSID
-char pass[] = "";       // your SSID Password
+char ssid[] = WSSID;    // your SSID
+char pass[] = WPSWD;       // your SSID Password
 
 static const int RXPin = 5, TXPin = 4; //GPS is attached to pin 4(TX from GPS) and pin 5(RX into GPS)
 SoftwareSerial ss(RXPin, TXPin); 
