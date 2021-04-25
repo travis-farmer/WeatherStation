@@ -35,18 +35,14 @@
 TinyGPSPlus gps;
 
 #include <SPI.h>
-#include <WiFi101.h>
+#include <Ethernet.h>
 #include <PubSubClient.h>
-#include "arduino_secrets.h"
 
 // Update these with values suitable for your hardware/network.
 byte mac[]    = {  0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xEE };
 IPAddress server(192, 168, 1, 171);
-
-// WiFi card example
-char ssid[] = WSSID;    // your SSID
-char pass[] = WPSWD;       // your SSID Password
-
+IPAddress ip(192, 168, 1, 29);
+IPAddress myDns(192, 168, 1, 1);
 static const int RXPin = 5, TXPin = 4; //GPS is attached to pin 4(TX from GPS) and pin 5(RX into GPS)
 SoftwareSerial ss(RXPin, TXPin); 
 
@@ -168,8 +164,8 @@ void callback(char* topic, char* payload, unsigned int length) {
   Serial.println(length);
 }
 
-WiFiClient wClient;
-PubSubClient client(wClient);
+EthernetClient eClient;
+PubSubClient client(eClient);
 
 long lastReconnectAttempt = 0;
 
@@ -191,19 +187,24 @@ void setup()
 
   client.setServer(server, 1883);
   client.setCallback(callback);
-
-  WiFi.setPins(53,48,49);
-  int status = WiFi.begin(ssid, pass);
-  if ( status != WL_CONNECTED) {
-    Serial.println("Couldn't get a wifi connection");
-    while(true);
-  }
-  // print out info about the connection:
-  else {
-    Serial.println("Connected to network");
-    IPAddress ip = WiFi.localIP();
-    Serial.print("My IP address is: ");
-    Serial.println(ip);
+ Serial.println("Initialize Ethernet with DHCP:");
+  if (Ethernet.begin(mac) == 0) {
+    Serial.println("Failed to configure Ethernet using DHCP");
+    // Check for Ethernet hardware present
+    if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+      Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
+      while (true) {
+        delay(1); // do nothing, no point running without Ethernet hardware
+      }
+    }
+    if (Ethernet.linkStatus() == LinkOFF) {
+      Serial.println("Ethernet cable is not connected.");
+    }
+    // try to congifure using IP address instead of DHCP:
+    Ethernet.begin(mac, ip, myDns);
+  } else {
+    Serial.print("  DHCP assigned IP ");
+    Serial.println(Ethernet.localIP());
   }
   delay(1500);
   lastReconnectAttempt = 0;
