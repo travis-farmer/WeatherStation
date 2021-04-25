@@ -31,8 +31,20 @@
 #include <TinyGPS++.h> //GPS parsing - Available through the Library Manager.
 #include <OneWire.h>
 #include <DallasTemperature.h>
-#define ONE_WIRE_BUS 9
+#define ONE_WIRE_BUS 22
 TinyGPSPlus gps;
+
+#include <SPI.h>
+#include <WiFi101.h>
+#include <PubSubClient.h>
+
+// Update these with values suitable for your hardware/network.
+byte mac[]    = {  0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xEE };
+IPAddress server(192, 168, 1, 171);
+
+// WiFi card example
+char ssid[] = "";    // your SSID
+char pass[] = "";       // your SSID Password
 
 static const int RXPin = 5, TXPin = 4; //GPS is attached to pin 4(TX from GPS) and pin 5(RX into GPS)
 SoftwareSerial ss(RXPin, TXPin); 
@@ -84,19 +96,19 @@ volatile float rainHour[60]; //60 floating numbers to keep track of 60 minutes o
 
 //These are all the weather values that wunderground expects:
 int winddir = 0; // [0-360 instantaneous wind direction]
-float windspeedmph = 0; // [mph instantaneous wind speed]
-float windgustmph = 0; // [mph current wind gust, using software specific time period]
+float windspeedmph = 0.0; // [mph instantaneous wind speed]
+float windgustmph = 0.0; // [mph current wind gust, using software specific time period]
 int windgustdir = 0; // [0-360 using software specific time period]
-float windspdmph_avg2m = 0; // [mph 2 minute average wind speed mph]
+float windspdmph_avg2m = 0.0; // [mph 2 minute average wind speed mph]
 int winddir_avg2m = 0; // [0-360 2 minute average wind direction]
-float windgustmph_10m = 0; // [mph past 10 minutes wind gust mph ]
+float windgustmph_10m = 0.0; // [mph past 10 minutes wind gust mph ]
 int windgustdir_10m = 0; // [0-360 past 10 minutes wind gust direction]
-float humidity = 0; // [%]
-float tempf = 0; // [temperature F]
-float rainin = 0; // [rain inches over the past hour)] -- the accumulated rainfall in the past 60 min
-volatile float dailyrainin = 0; // [rain inches so far today in local time]
+float humidity = 0.0; // [%]
+float tempf = 0.0; // [temperature F]
+float rainin = 0.0; // [rain inches over the past hour)] -- the accumulated rainfall in the past 60 min
+volatile float dailyrainin = 0.0; // [rain inches so far today in local time]
 //float baromin = 30.03;// [barom in] - It's hard to calculate baromin locally, do this in the agent
-float pressure = 0;
+float pressure = 0.0;
 //float dewptf; // [dewpoint F] - It's hard to calculate dewpoint locally, do this in the agent
 
 float batt_lvl = 11.8; //[analog value from 0 to 1023]
@@ -145,10 +157,56 @@ OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 DeviceAddress outsideThermometer;
 
+void callback(char* topic, char* payload, unsigned int length) {
+  Serial.print(topic);
+  Serial.print(":");
+  for (int i=0; i< length; i++) {
+    Serial.print(payload[i]);
+  }
+  Serial.print(":");
+  Serial.println(length);
+}
+
+WiFiClient wClient;
+PubSubClient client(wClient);
+
+long lastReconnectAttempt = 0;
+
+boolean reconnect() {
+  if (client.connect("arduinoClient")) {
+    // Once connected, publish an announcement...
+    // client.publish("test/outTopic","testing");
+    // ... and resubscribe
+    // client.subscribe("generator/Monitor/Platform_Stats/System_Uptime");
+    printWeather();
+    
+  }
+  return client.connected();
+}
+
 void setup()
 {
   Serial.begin (9600);
 
+  client.setServer(server, 1883);
+  client.setCallback(callback);
+
+  WiFi.setPins(53,48,49);
+  int status = WiFi.begin(ssid, pass);
+  if ( status != WL_CONNECTED) {
+    Serial.println("Couldn't get a wifi connection");
+    while(true);
+  }
+  // print out info about the connection:
+  else {
+    Serial.println("Connected to network");
+    IPAddress ip = WiFi.localIP();
+    Serial.print("My IP address is: ");
+    Serial.println(ip);
+  }
+  delay(1500);
+  lastReconnectAttempt = 0;
+  
   ss.begin(9600); //Begin listening to GPS over software serial at 9600. This should be the default baud of the module.
   
   sensors.begin();
@@ -192,6 +250,21 @@ void setup()
 
 void loop()
 {
+  if (!client.connected()) {
+    long now = millis();
+    if (now - lastReconnectAttempt > 5000) {
+      lastReconnectAttempt = now;
+      // Attempt to reconnect
+      if (reconnect()) {
+        lastReconnectAttempt = 0;
+      }
+    }
+  } else {
+    // Client connected
+
+    client.loop();
+  }
+  
   //Keep track of which minute it is
   if(millis() - lastSecond >= 1000)
   {
@@ -203,7 +276,7 @@ void loop()
     if(++seconds_2m > 119) seconds_2m = 0;
 
     //Calc the wind speed and direction every second for 120 second to get 2 minute average
-    float currentSpeed = get_wind_speed();
+    /*float currentSpeed = get_wind_speed();
     //float currentSpeed = random(5); //For testing
     int currentDirection = get_wind_direction();
     windspdavg[seconds_2m] = (int)currentSpeed;
@@ -233,7 +306,7 @@ void loop()
 
       rainHour[minutes] = 0; //Zero out this minute's rainfall amount
       windgust_10m[minutes_10m] = 0; //Zero out this minute's gust
-    }
+    }*/
 
     //Report all readings every second
     printWeather();
@@ -264,14 +337,14 @@ void calcWeather()
   winddir = get_wind_direction();
 
   //Calc windspeed
-  //windspeedmph = get_wind_speed(); //This is calculated in the main loop
+  windspeedmph = get_wind_speed(); //This is calculated in the main loop
 
   //Calc windgustmph
   //Calc windgustdir
   //Report the largest windgust today
   //windgustmph = 0;
   //windgustdir = 0;
-
+/*
   //Calc windspdmph_avg2m
   float temp = 0;
   for(int i = 0 ; i < 120 ; i++)
@@ -299,7 +372,7 @@ void calcWeather()
       windgustmph_10m = windgust_10m[i];
       windgustdir_10m = windgustdirection_10m[i];
     }
-  }
+  }*/
 
   //Calc humidity
   humidity = myHumidity.getRH();
@@ -311,6 +384,7 @@ void calcWeather()
   //tempf = myPressure.readTempF();
   //Serial.print(" TempP:");
   //Serial.print(tempf, 2);
+  
   sensors.requestTemperatures();
   float tempC = sensors.getTempC(outsideThermometer);
   tempf = DallasTemperature::toFahrenheit(tempC);
@@ -372,7 +446,8 @@ float get_battery_level()
 float get_wind_speed()
 {
   float deltaTime = millis() - lastWindCheck; //750ms
-
+ 
+ 
   deltaTime /= 1000.0; //Covert to seconds
 
   float windSpeed = (float)windClicks / deltaTime; //3 / 0.750s = 4
@@ -382,11 +457,14 @@ float get_wind_speed()
 
   windSpeed *= 1.492; //4 * 1.492 = 5.968MPH
 
-  /* Serial.println();
-   Serial.print("Windspeed:");
-   Serial.println(windSpeed);*/
-
-  return(windSpeed);
+  // Serial.println();
+   //Serial.print("Windspeed:");
+   //Serial.println(windSpeed);
+  if (isnan(windSpeed) == true) {
+    return(0.00);
+  } else {
+    return(windSpeed);
+  }
 }
 
 //Read the wind direction sensor, return heading in degrees
@@ -416,7 +494,7 @@ int get_wind_direction()
   if (adc < 940) return (293);
   if (adc < 967) return (315);
   if (adc < 990) return (270);
-  return (-1); // error, disconnected?
+  return (0); // error, disconnected?
 }
 
 
@@ -425,11 +503,19 @@ int get_wind_direction()
 void printWeather()
 {
   calcWeather(); //Go calc all the various sensors
+  char sz[32];
   
-  Serial.print("$,winddir=");
-  Serial.print(winddir);
-  Serial.print(",windspeedmph=");
-  Serial.print(windspeedmph, 1);
+  //Serial.print("$,winddir=");
+  //Serial.print(winddir);
+  sprintf(sz, "%d", winddir);
+  client.publish("weather/winddir",sz);
+  
+  //Serial.print(",windspeedmph=");
+  //Serial.print(windspeedmph, 1);
+  //sprintf(sz, "%02d", windspeedmph);
+  dtostrf(windspeedmph, 4, 2, sz);
+  client.publish("weather/windspeedmph",sz);
+  
   /*Serial.print(",windgustmph=");
   Serial.print(windgustmph, 1);
   Serial.print(",windgustdir=");
@@ -442,41 +528,81 @@ void printWeather()
   Serial.print(windgustmph_10m, 1);
   Serial.print(",windgustdir_10m=");
   Serial.print(windgustdir_10m);*/
-  Serial.print(",humidity=");
-  Serial.print(humidity, 1);
-  Serial.print(",tempf=");
-  Serial.print(tempf, 1);
-  Serial.print(",rainin=");
-  Serial.print(rainin, 2);
-  Serial.print(",dailyrainin=");
-  Serial.print(dailyrainin, 2);
-  Serial.print(",pressure=");
-  Serial.print(pressure, 2);
-  Serial.print(",batt_lvl=");
-  Serial.print(batt_lvl, 2);
-  Serial.print(",light_lvl=");
-  Serial.print(light_lvl, 2);
+  //Serial.print(",humidity=");
+  //Serial.print(humidity, 1);
+  //sprintf(sz, "%02d", humidity);
+  dtostrf(humidity, 4, 2, sz);
+  client.publish("weather/humidity",sz);
+  
+  //Serial.print(",tempf=");
+  //Serial.print(tempf, 1);
+  //sprintf(sz, "%02d", tempf);
+  dtostrf(tempf, 4, 2, sz);
+  client.publish("weather/tempf",sz);
+  
+  //Serial.print(",rainin=");
+  //Serial.print(rainin, 2);
+  //sprintf(sz, "%02d", rainin);
+  dtostrf(rainin, 4, 2, sz);
+  client.publish("weather/rainin",sz);
+  
+  //Serial.print(",dailyrainin=");
+  //Serial.print(dailyrainin, 2);
+  //sprintf(sz, "%02d", dailyrainin);
+  dtostrf(dailyrainin, 4, 2, sz);
+  client.publish("weather/dailyrainin",sz);
+  
+  //Serial.print(",pressure=");
+  //Serial.print(pressure, 2);
+  //sprintf(sz, "%02d", pressure);
+  //dtostrf(pressure, 4, 2, sz);
+  //client.publish("weather/pressure",sz);
+  
+  //Serial.print(",batt_lvl=");
+  //Serial.print(batt_lvl, 2);
+  //sprintf(sz, "%02d", batt_lvl);
+  dtostrf(batt_lvl, 4, 2, sz);
+  client.publish("weather/batt_lvl",sz);
+  
+  //Serial.print(",light_lvl=");
+  //Serial.print(light_lvl, 2);
+  //sprintf(sz, "%02d", light_lvl);
+  dtostrf(light_lvl, 4, 2, sz);
+  client.publish("weather/light_lvl",sz);
 
-  Serial.print(",lat=");
-  Serial.print(gps.location.lat(), 6);
-  Serial.print(",lat=");
-  Serial.print(gps.location.lng(), 6);
-  Serial.print(",altitude=");
-  Serial.print(gps.altitude.meters());
-  Serial.print(",sats=");
-  Serial.print(gps.satellites.value());
+  //Serial.print(",lat=");
+  //Serial.print(gps.location.lat(), 6);
+  //sprintf(sz, "%06d", gps.location.lat());
+  dtostrf(gps.location.lat(), 4, 6, sz);
+  client.publish("weather/lat",sz);
+  
+  //Serial.print(",lat=");
+  //Serial.print(gps.location.lng(), 6);
+  //sprintf(sz, "%06d", gps.location.lng());
+  dtostrf(gps.location.lng(), 4, 6, sz);
+  client.publish("weather/lng",sz);
+  
+  //Serial.print(",altitude=");
+  //Serial.print(gps.altitude.meters());
+  //sprintf(sz, "%02d", winddir);
+  dtostrf(gps.altitude.feet(), 4, 2, sz);
+  client.publish("weather/altitude",sz);
+  
+  //Serial.print(",sats=");
+  //Serial.print(gps.satellites.value());
+  client.publish("weather/sats",gps.satellites.value());
 
-  char sz[32];
-  Serial.print(",date=");
+  //Serial.print(",date=");
   sprintf(sz, "%02d/%02d/%02d", gps.date.month(), gps.date.day(), gps.date.year());
-  Serial.print(sz);
+  //Serial.print(sz);
+  client.publish("weather/date",sz);
 
-  Serial.print(",time=");
+  //Serial.print(",time=");
   sprintf(sz, "%02d:%02d:%02d", gps.time.hour(), gps.time.minute(), gps.time.second());
-  Serial.print(sz);
+  //Serial.print(sz);
+  client.publish("weather/time",sz);
 
-  Serial.print(",");
-  Serial.println("#");
+  //Serial.print(",");
+  //Serial.println("#");
 
 }
-
