@@ -73,6 +73,7 @@ byte seconds_2m; //Keeps track of the "wind speed/dir avg" over last 2 minutes a
 byte minutes; //Keeps track of where we are in various arrays of data
 byte minutes_10m; //Keeps track of where we are in wind gust/dir over last 10 minutes array of data
 
+
 long lastWindCheck = 0;
 volatile long lastWindIRQ = 0;
 volatile byte windClicks = 0;
@@ -154,14 +155,29 @@ OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 DeviceAddress outsideThermometer;
 
-void callback(char* topic, char* payload, unsigned int length) {
-  Serial.print(topic);
-  Serial.print(":");
-  for (int i=0; i< length; i++) {
-    Serial.print(payload[i]);
+void errorProc(int errorNum) {
+  unsigned long lastErrorTim = 0UL;
+  int delayON = (((1000 - 750) / errorNum) / 2);
+  while(1) {
+    digitalWrite(STAT1,LOW);
+    delay(250);
+    for (int i=0; i < errorNum; i++) {
+      digitalWrite(STAT1,HIGH);
+      delay(delayON);
+      digitalWrite(STAT1,LOW);
+      delay(delayON);
+    }
   }
-  Serial.print(":");
-  Serial.println(length);
+}
+
+void callback(char* topic, char* payload, unsigned int length) {
+  //Serial.print(topic);
+  //Serial.print(":");
+  for (int i=0; i< length; i++) {
+    //Serial.print(payload[i]);
+  }
+  //Serial.print(":");
+  //Serial.println(length);
 }
 
 EthernetClient eClient;
@@ -183,28 +199,30 @@ boolean reconnect() {
 
 void setup()
 {
-  Serial.begin (9600);
-
+  //Serial.begin (9600);
+  pinMode(STAT1, OUTPUT); //Status LED Blue
+  pinMode(STAT2, OUTPUT); //Status LED Green
+  digitalWrite(STAT1, LOW);
+  digitalWrite(STAT2, LOW);
   client.setServer(server, 1883);
   client.setCallback(callback);
- Serial.println("Initialize Ethernet with DHCP:");
+ //Serial.println("Initialize Ethernet with DHCP:");
   if (Ethernet.begin(mac) == 0) {
-    Serial.println("Failed to configure Ethernet using DHCP");
+    //Serial.println("Failed to configure Ethernet using DHCP");
     // Check for Ethernet hardware present
     if (Ethernet.hardwareStatus() == EthernetNoHardware) {
-      Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
-      while (true) {
-        delay(1); // do nothing, no point running without Ethernet hardware
-      }
+      //Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
+      errorProc(1);
     }
     if (Ethernet.linkStatus() == LinkOFF) {
-      Serial.println("Ethernet cable is not connected.");
+      //Serial.println("Ethernet cable is not connected.");
+      errorProc(2);
     }
     // try to congifure using IP address instead of DHCP:
     Ethernet.begin(mac, ip, myDns);
   } else {
-    Serial.print("  DHCP assigned IP ");
-    Serial.println(Ethernet.localIP());
+    //Serial.print("  DHCP assigned IP ");
+    //Serial.println(Ethernet.localIP());
   }
   delay(1500);
   lastReconnectAttempt = 0;
@@ -212,11 +230,10 @@ void setup()
   ss.begin(9600); //Begin listening to GPS over software serial at 9600. This should be the default baud of the module.
   
   sensors.begin();
-  if (!sensors.getAddress(outsideThermometer, 0)) Serial.println("Unable to find address for Device 0");
+  if (!sensors.getAddress(outsideThermometer, 0)) errorProc(3); //Serial.println("Unable to find address for Device 0");
   sensors.setResolution(outsideThermometer, 9);
   
-  pinMode(STAT1, OUTPUT); //Status LED Blue
-  pinMode(STAT2, OUTPUT); //Status LED Green
+
 
   pinMode(GPS_PWRCTL, OUTPUT);
   digitalWrite(GPS_PWRCTL, HIGH); //Pulling this pin low puts GPS to sleep but maintains RTC and RAM
@@ -246,12 +263,14 @@ void setup()
   // turn on interrupts
   interrupts();
 
-  Serial.println("Weather Shield online!");
+  //Serial.println("Weather Shield online!");
 
 }
 
 void loop()
 {
+  digitalWrite(STAT2, HIGH);
+
   if (!client.connected()) {
     long now = millis();
     if (now - lastReconnectAttempt > 5000) {
@@ -270,8 +289,7 @@ void loop()
   //Keep track of which minute it is
   if(millis() - lastSecond >= 1000)
   {
-    digitalWrite(STAT1, HIGH); //Blink stat LED
-
+    
     lastSecond += 1000;
 
     //Take a speed and direction reading every second for 2 minute average
@@ -313,9 +331,9 @@ void loop()
     //Report all readings every second
     printWeather();
 
-    digitalWrite(STAT1, LOW); //Turn off stat LED
+    
   }
-  //smartdelay(800); //Wait 1 second, and gather GPS data
+  smartdelay(800); //Wait 1 second, and gather GPS data
 }
 
 
