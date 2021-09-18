@@ -1,4 +1,4 @@
-/* 
+/*
  Weather Shield Example
  By: Nathan Seidle
  SparkFun Electronics
@@ -19,24 +19,46 @@
  Updated by Joel Bartlett
  03/02/2017
  Removed HTU21D code and replaced with Si7021
- 
+
  11/19/2017 - Travis Farmer
- added code for DS18B20 for extendid range temp.
+ added code for DS18B20 for extendid range temp, WiFi, MQQT.
  */
 
-#include <Wire.h> //I2C needed for sensors
-#include "SparkFunMPL3115A2.h" //Pressure sensor - Search "SparkFun MPL3115" and install from Library Manager
-#include "SparkFun_Si7021_Breakout_Library.h" //Humidity sensor - Search "SparkFun Si7021" and install from Library Manager
+
 #include <SoftwareSerial.h> //Needed for GPS
 #include <TinyGPS++.h> //GPS parsing - Available through the Library Manager.
-#include <OneWire.h>
-#include <DallasTemperature.h>
-#define ONE_WIRE_BUS 22
+#include <dhtnew.h>
+
+DHTNEW mySensor(22);
 TinyGPSPlus gps;
 
 #include <SPI.h>
 #include <Ethernet.h>
 #include <PubSubClient.h>
+
+#include <Wire.h>
+#include "SparkFun_AS3935.h"
+
+// 0x03 is default, but the address can also be 0x02, 0x01.
+// Adjust the address jumpers on the underside of the product.
+#define AS3935_ADDR 0x03
+#define INDOOR 0x12
+#define OUTDOOR 0xE
+#define LIGHTNING_INT 0x08
+#define DISTURBER_INT 0x04
+#define NOISE_INT 0x01
+
+SparkFun_AS3935 lightning(AS3935_ADDR);
+
+// Interrupt pin for lightning detection
+const int lightningInt = 23;
+
+// This variable holds the number representing the lightning or non-lightning
+// event issued by the lightning detector.
+int intVal = 0;
+int noise = 2; // Value between 1-7
+int disturber = 2; // Value between 1-10
+
 
 // Update these with values suitable for your hardware/network.
 byte mac[]    = {  0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xEE };
@@ -44,10 +66,9 @@ IPAddress server(192, 168, 1, 171);
 IPAddress ip(192, 168, 1, 29);
 IPAddress myDns(192, 168, 1, 1);
 static const int RXPin = 5, TXPin = 4; //GPS is attached to pin 4(TX from GPS) and pin 5(RX into GPS)
-SoftwareSerial ss(RXPin, TXPin); 
+SoftwareSerial ss(RXPin, TXPin);
 
-MPL3115A2 myPressure; //Create an instance of the pressure sensor
-Weather myHumidity;//Create an instance of the humidity sensor
+
 
 //Hardware pin definitions
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -111,6 +132,7 @@ float pressure = 0.0;
 
 float batt_lvl = 11.8; //[analog value from 0 to 1023]
 float light_lvl = 455; //[analog value from 0 to 1023]
+int lightning_DistKM = 0;
 
 //Variables used for GPS
 //float flat, flon; // 39.015024 -102.283608686
@@ -151,9 +173,6 @@ void wspeedIRQ()
   }
 }
 
-OneWire oneWire(ONE_WIRE_BUS);
-DallasTemperature sensors(&oneWire);
-DeviceAddress outsideThermometer;
 
 void errorProc(int errorNum) {
   unsigned long lastErrorTim = 0UL;
@@ -192,7 +211,7 @@ boolean reconnect() {
     // ... and resubscribe
     // client.subscribe("generator/Monitor/Platform_Stats/System_Uptime");
     printWeather();
-    
+
   }
   return client.connected();
 }
@@ -226,13 +245,8 @@ void setup()
   }
   delay(1500);
   lastReconnectAttempt = 0;
-  
+
   ss.begin(9600); //Begin listening to GPS over software serial at 9600. This should be the default baud of the module.
-  
-  sensors.begin();
-  if (!sensors.getAddress(outsideThermometer, 0)) errorProc(3); //Serial.println("Unable to find address for Device 0");
-  sensors.setResolution(outsideThermometer, 9);
-  
 
 
   pinMode(GPS_PWRCTL, OUTPUT);
@@ -244,14 +258,6 @@ void setup()
   pinMode(REFERENCE_3V3, INPUT);
   pinMode(LIGHT, INPUT);
 
-  //Configure the pressure sensor
-  myPressure.begin(); // Get sensor online
-  myPressure.setModeBarometer(); // Measure pressure in Pascals from 20 to 110 kPa
-  myPressure.setOversampleRate(7); // Set Oversample to the recommended 128
-  myPressure.enableEventFlags(); // Enable all three pressure and temp event flags 
-
-  //Configure the humidity sensor
-  myHumidity.begin();
 
   seconds = 0;
   lastSecond = millis();
@@ -264,7 +270,10 @@ void setup()
   interrupts();
 
   //Serial.println("Weather Shield online!");
-
+// When lightning is detected the interrupt pin goes HIGH.
+  pinMode(lightningInt, INPUT);
+  //Wire.begin();
+  //lightning.begin();
 }
 
 void loop()
@@ -285,11 +294,11 @@ void loop()
 
     client.loop();
   }
-  
+
   //Keep track of which minute it is
   if(millis() - lastSecond >= 1000)
   {
-    
+
     lastSecond += 1000;
 
     //Take a speed and direction reading every second for 2 minute average
@@ -331,18 +340,27 @@ void loop()
     //Report all readings every second
     printWeather();
 
-    
-  }
-  smartdelay(800); //Wait 1 second, and gather GPS data
-}
 
+  }
+
+  if(digitalRead(lightningInt) == HIGH){
+    intVal = lightning.readInterruptReg();
+    if(intVal == LIGHTNING_INT){
+      lightning_DistKM = lightning.distanceToStorm();
+    }
+  }
+
+  smartdelay(800); //Wait 1 second, and gather GPS data
+
+
+}
 
 
 //While we delay for a given amount of time, gather GPS data
 static void smartdelay(unsigned long ms)
 {
   unsigned long start = millis();
-  do 
+  do
   {
     while (ss.available())
       gps.encode(ss.read());
@@ -384,7 +402,7 @@ void calcWeather()
   //Find the largest windgust in the last 10 minutes
   windgustmph_10m = 0;
   windgustdir_10m = 0;
-  //Step through the 10 minutes  
+  //Step through the 10 minutes
   for(int i = 0; i < 10 ; i++)
   {
     if(windgust_10m[i] > windgustmph_10m)
@@ -393,9 +411,9 @@ void calcWeather()
       windgustdir_10m = windgustdirection_10m[i];
     }
   }*/
-
+  int chk = mySensor.read();
   //Calc humidity
-  humidity = myHumidity.getRH();
+  humidity = mySensor.getHumidity();
   //float temp_h = myHumidity.readTemperature();
   //Serial.print(" TempH:");
   //Serial.print(temp_h, 2);
@@ -404,19 +422,15 @@ void calcWeather()
   //tempf = myPressure.readTempF();
   //Serial.print(" TempP:");
   //Serial.print(tempf, 2);
-  
-  sensors.requestTemperatures();
-  float tempC = sensors.getTempC(outsideThermometer);
-  tempf = DallasTemperature::toFahrenheit(tempC);
 
+  //tempf = mySensor.getTemperature();
+  tempf = ((mySensor.getTemperature() * 1.8) + 32);
   //Total rainfall for the day is calculated within the interrupt
   //Calculate amount of rainfall for the last 60 minutes
-  rainin = 0;  
+  rainin = 0;
   for(int i = 0 ; i < 60 ; i++)
     rainin += rainHour[i];
 
-  //Calc pressure
-  pressure = myPressure.readPressure();
 
   //Calc dewptf
 
@@ -466,8 +480,8 @@ float get_battery_level()
 float get_wind_speed()
 {
   float deltaTime = millis() - lastWindCheck; //750ms
- 
- 
+
+
   deltaTime /= 1000.0; //Covert to seconds
 
   float windSpeed = (float)windClicks / deltaTime; //3 / 0.750s = 4
@@ -488,7 +502,7 @@ float get_wind_speed()
 }
 
 //Read the wind direction sensor, return heading in degrees
-int get_wind_direction() 
+int get_wind_direction()
 {
   unsigned int adc;
 
@@ -524,18 +538,18 @@ void printWeather()
 {
   calcWeather(); //Go calc all the various sensors
   char sz[32];
-  
+
   //Serial.print("$,winddir=");
   //Serial.print(winddir);
   sprintf(sz, "%d", winddir);
   client.publish("weather/winddir",sz);
-  
+
   //Serial.print(",windspeedmph=");
   //Serial.print(windspeedmph, 1);
   //sprintf(sz, "%02d", windspeedmph);
   dtostrf(windspeedmph, 4, 2, sz);
   client.publish("weather/windspeedmph",sz);
-  
+
   /*Serial.print(",windgustmph=");
   Serial.print(windgustmph, 1);
   Serial.print(",windgustdir=");
@@ -553,37 +567,39 @@ void printWeather()
   //sprintf(sz, "%02d", humidity);
   dtostrf(humidity, 4, 2, sz);
   client.publish("weather/humidity",sz);
-  
+
   //Serial.print(",tempf=");
   //Serial.print(tempf, 1);
   //sprintf(sz, "%02d", tempf);
   dtostrf(tempf, 4, 2, sz);
   client.publish("weather/tempf",sz);
-  
+
   //Serial.print(",rainin=");
   //Serial.print(rainin, 2);
   //sprintf(sz, "%02d", rainin);
   dtostrf(rainin, 4, 2, sz);
   client.publish("weather/rainin",sz);
-  
+
   //Serial.print(",dailyrainin=");
   //Serial.print(dailyrainin, 2);
   //sprintf(sz, "%02d", dailyrainin);
   dtostrf(dailyrainin, 4, 2, sz);
   client.publish("weather/dailyrainin",sz);
-  
+
   //Serial.print(",pressure=");
   //Serial.print(pressure, 2);
   //sprintf(sz, "%02d", pressure);
-  //dtostrf(pressure, 4, 2, sz);
-  //client.publish("weather/pressure",sz);
-  
+
+  float lightning_DistMiles = ((float)lightning_DistKM / 1.609);
+  dtostrf(lightning_DistMiles, 4, 2, sz);
+  client.publish("weather/lightning",sz);
+
   //Serial.print(",batt_lvl=");
   //Serial.print(batt_lvl, 2);
   //sprintf(sz, "%02d", batt_lvl);
   dtostrf(batt_lvl, 4, 2, sz);
   client.publish("weather/batt_lvl",sz);
-  
+
   //Serial.print(",light_lvl=");
   //Serial.print(light_lvl, 2);
   //sprintf(sz, "%02d", light_lvl);
@@ -595,19 +611,19 @@ void printWeather()
   //sprintf(sz, "%06d", gps.location.lat());
   dtostrf(gps.location.lat(), 4, 6, sz);
   client.publish("weather/lat",sz);
-  
+
   //Serial.print(",lat=");
   //Serial.print(gps.location.lng(), 6);
   //sprintf(sz, "%06d", gps.location.lng());
   dtostrf(gps.location.lng(), 4, 6, sz);
   client.publish("weather/lng",sz);
-  
+
   //Serial.print(",altitude=");
   //Serial.print(gps.altitude.meters());
   //sprintf(sz, "%02d", winddir);
   dtostrf(gps.altitude.feet(), 4, 2, sz);
   client.publish("weather/altitude",sz);
-  
+
   //Serial.print(",sats=");
   //Serial.print(gps.satellites.value());
   client.publish("weather/sats",gps.satellites.value());
