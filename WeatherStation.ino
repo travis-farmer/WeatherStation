@@ -32,39 +32,10 @@
 DHTNEW mySensor(22);
 TinyGPSPlus gps;
 
+#include <RHReliableDatagram.h>
+#include <RH_RF69.h>
 #include <SPI.h>
-#include <Ethernet.h>
-#include <PubSubClient.h>
 
-#include <Wire.h>
-#include "SparkFun_AS3935.h"
-
-// 0x03 is default, but the address can also be 0x02, 0x01.
-// Adjust the address jumpers on the underside of the product.
-#define AS3935_ADDR 0x03
-#define INDOOR 0x12
-#define OUTDOOR 0xE
-#define LIGHTNING_INT 0x08
-#define DISTURBER_INT 0x04
-#define NOISE_INT 0x01
-
-SparkFun_AS3935 lightning(AS3935_ADDR);
-
-// Interrupt pin for lightning detection
-const int lightningInt = 23;
-
-// This variable holds the number representing the lightning or non-lightning
-// event issued by the lightning detector.
-int intVal = 0;
-int noise = 2; // Value between 1-7
-int disturber = 2; // Value between 1-10
-
-
-// Update these with values suitable for your hardware/network.
-byte mac[]    = {  0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xEE };
-IPAddress server(192, 168, 1, 171);
-IPAddress ip(192, 168, 1, 29);
-IPAddress myDns(192, 168, 1, 1);
 static const int RXPin = 5, TXPin = 4; //GPS is attached to pin 4(TX from GPS) and pin 5(RX into GPS)
 SoftwareSerial ss(RXPin, TXPin);
 
@@ -132,7 +103,18 @@ float pressure = 0.0;
 
 float batt_lvl = 11.8; //[analog value from 0 to 1023]
 float light_lvl = 455; //[analog value from 0 to 1023]
-int lightning_DistKM = 0;
+
+#define CLIENT_ADDRESS 1
+#define SERVER_ADDRESS 2
+
+// Singleton instance of the radio driver
+RH_RF69 driver(23, 18); // SPI SS on 23, INT3 on UART tx01
+//RH_RF69 driver(15, 16); // For RF69 on PJRC breakout board with Teensy 3.1
+//RH_RF69 driver(4, 2); // For MoteinoMEGA https://lowpowerlab.com/shop/moteinomega
+//RH_RF69 driver(8, 7); // Adafruit Feather 32u4
+
+// Class to manage message delivery and receipt, using the driver declared above
+RHReliableDatagram manager(driver, CLIENT_ADDRESS);
 
 //Variables used for GPS
 //float flat, flon; // 39.015024 -102.283608686
@@ -189,64 +171,26 @@ void errorProc(int errorNum) {
   }
 }
 
-void callback(char* topic, char* payload, unsigned int length) {
-  //Serial.print(topic);
-  //Serial.print(":");
-  for (int i=0; i< length; i++) {
-    //Serial.print(payload[i]);
-  }
-  //Serial.print(":");
-  //Serial.println(length);
-}
-
-EthernetClient eClient;
-PubSubClient client(eClient);
-
-long lastReconnectAttempt = 0;
-
-boolean reconnect() {
-  if (client.connect("arduinoClient")) {
-    // Once connected, publish an announcement...
-    // client.publish("test/outTopic","testing");
-    // ... and resubscribe
-    // client.subscribe("generator/Monitor/Platform_Stats/System_Uptime");
-    printWeather();
-
-  }
-  return client.connected();
-}
 
 void setup()
 {
-  //Serial.begin (9600);
+  Serial.begin (9600);
   pinMode(STAT1, OUTPUT); //Status LED Blue
   pinMode(STAT2, OUTPUT); //Status LED Green
   digitalWrite(STAT1, LOW);
   digitalWrite(STAT2, LOW);
-  client.setServer(server, 1883);
-  client.setCallback(callback);
- //Serial.println("Initialize Ethernet with DHCP:");
-  if (Ethernet.begin(mac) == 0) {
-    //Serial.println("Failed to configure Ethernet using DHCP");
-    // Check for Ethernet hardware present
-    if (Ethernet.hardwareStatus() == EthernetNoHardware) {
-      //Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
-      errorProc(1);
-    }
-    if (Ethernet.linkStatus() == LinkOFF) {
-      //Serial.println("Ethernet cable is not connected.");
-      errorProc(2);
-    }
-    // try to congifure using IP address instead of DHCP:
-    Ethernet.begin(mac, ip, myDns);
-  } else {
-    //Serial.print("  DHCP assigned IP ");
-    //Serial.println(Ethernet.localIP());
-  }
-  delay(1500);
-  lastReconnectAttempt = 0;
 
-  ss.begin(9600); //Begin listening to GPS over software serial at 9600. This should be the default baud of the module.
+  if (!manager.init())
+    digitalWrite(STAT1, HIGH);
+  // Defaults after init are 434.0MHz, modulation GFSK_Rb250Fd250, +13dbM (for low power module)
+
+  // If you are using a high power RF69 eg RFM69HW, you *must* set a Tx power with the
+  // ishighpowermodule flag set like this:
+  driver.setTxPower(14, true);
+
+  delay(1500);
+
+  //ss.begin(9600); //Begin listening to GPS over software serial at 9600. This should be the default baud of the module.
 
 
   pinMode(GPS_PWRCTL, OUTPUT);
@@ -269,31 +213,71 @@ void setup()
   // turn on interrupts
   interrupts();
 
-  //Serial.println("Weather Shield online!");
-// When lightning is detected the interrupt pin goes HIGH.
-  pinMode(lightningInt, INPUT);
-  //Wire.begin();
-  //lightning.begin();
+  Serial.println("Weather Shield online!");
 }
+
+
+// Dont put this on the stack:
+uint8_t buf[RH_RF69_MAX_MESSAGE_LEN];
 
 void loop()
 {
   digitalWrite(STAT2, HIGH);
 
-  if (!client.connected()) {
-    long now = millis();
-    if (now - lastReconnectAttempt > 5000) {
-      lastReconnectAttempt = now;
-      // Attempt to reconnect
-      if (reconnect()) {
-        lastReconnectAttempt = 0;
-      }
-    }
-  } else {
-    // Client connected
+  // Send a message to manager_server
+    calcWeather(); //Go calc all the various sensors
+  char sz[10];
 
-    client.loop();
-  }
+  sprintf(sz, "%d", winddir);
+  String strWindDir = "0";
+  strWindDir.concat(sz);
+  char chrWindDir[10];
+  strWindDir.toCharArray(chrWindDir, strWindDir.length());
+  manager.sendtoWait(chrWindDir, sizeof(chrWindDir), SERVER_ADDRESS);
+
+  dtostrf(windspeedmph, 4, 2, sz);
+  String strWindSpeed = "1";
+  strWindSpeed.concat(sz);
+  char chrWindSpeed[10];
+  strWindSpeed.toCharArray(chrWindSpeed, strWindSpeed.length());
+  manager.sendtoWait(chrWindSpeed, sizeof(chrWindSpeed), SERVER_ADDRESS);
+
+  dtostrf(humidity, 4, 2, sz);
+  String strHumidity = "2";
+  strHumidity.concat(sz);
+  char chrHumidity[10];
+  strHumidity.toCharArray(chrHumidity, strHumidity.length());
+  manager.sendtoWait(chrHumidity, sizeof(chrHumidity), SERVER_ADDRESS);
+
+  dtostrf(tempf, 4, 2, sz);
+  String strTempF = "3";
+  strTempF.concat(sz);
+  char chrTempF[10];
+  strTempF.toCharArray(chrTempF, strTempF.length());
+  manager.sendtoWait(chrTempF, sizeof(chrTempF), SERVER_ADDRESS);
+
+  dtostrf(rainin, 4, 2, sz);
+  String strRainIn = "4";
+  strRainIn.concat(sz);
+  char chrRainIn[10];
+  strRainIn.toCharArray(chrRainIn, strRainIn.length());
+  manager.sendtoWait(chrRainIn, sizeof(chrRainIn), SERVER_ADDRESS);
+
+  dtostrf(dailyrainin, 4, 2, sz);
+  String strDRainIn = "5";
+  strDRainIn.concat(sz);
+  char chrDRainIn[10];
+  strDRainIn.toCharArray(chrDRainIn, strDRainIn.length());
+  manager.sendtoWait(chrDRainIn, sizeof(chrDRainIn), SERVER_ADDRESS);
+
+  dtostrf(batt_lvl, 4, 2, sz);
+  String strBatt = "6";
+  strBatt.concat(sz);
+  char chrBatt[10];
+  strBatt.toCharArray(chrBatt, strBatt.length());
+  manager.sendtoWait(chrBatt, sizeof(chrBatt), SERVER_ADDRESS);
+
+
 
   //Keep track of which minute it is
   if(millis() - lastSecond >= 1000)
@@ -304,53 +288,19 @@ void loop()
     //Take a speed and direction reading every second for 2 minute average
     if(++seconds_2m > 119) seconds_2m = 0;
 
-    //Calc the wind speed and direction every second for 120 second to get 2 minute average
-    /*float currentSpeed = get_wind_speed();
-    //float currentSpeed = random(5); //For testing
-    int currentDirection = get_wind_direction();
-    windspdavg[seconds_2m] = (int)currentSpeed;
-    winddiravg[seconds_2m] = currentDirection;
-    //if(seconds_2m % 10 == 0) displayArrays(); //For testing
 
-    //Check to see if this is a gust for the minute
-    if(currentSpeed > windgust_10m[minutes_10m])
-    {
-      windgust_10m[minutes_10m] = currentSpeed;
-      windgustdirection_10m[minutes_10m] = currentDirection;
-    }
-
-    //Check to see if this is a gust for the day
-    if(currentSpeed > windgustmph)
-    {
-      windgustmph = currentSpeed;
-      windgustdir = currentDirection;
-    }
-
-    if(++seconds > 59)
-    {
-      seconds = 0;
-
-      if(++minutes > 59) minutes = 0;
-      if(++minutes_10m > 9) minutes_10m = 0;
-
-      rainHour[minutes] = 0; //Zero out this minute's rainfall amount
-      windgust_10m[minutes_10m] = 0; //Zero out this minute's gust
-    }*/
-
-    //Report all readings every second
-    printWeather();
 
 
   }
 
-  if(digitalRead(lightningInt) == HIGH){
+  /*if(digitalRead(lightningInt) == HIGH){
     intVal = lightning.readInterruptReg();
     if(intVal == LIGHTNING_INT){
       lightning_DistKM = lightning.distanceToStorm();
     }
-  }
+  }*/
 
-  smartdelay(800); //Wait 1 second, and gather GPS data
+  smartdelay(1000); //Wait 1 second, and gather GPS data
 
 
 }
@@ -362,8 +312,8 @@ static void smartdelay(unsigned long ms)
   unsigned long start = millis();
   do
   {
-    while (ss.available())
-      gps.encode(ss.read());
+    while (Serial.available())
+      gps.encode(Serial.read());
   } while (millis() - start < ms);
 }
 
@@ -377,51 +327,9 @@ void calcWeather()
   //Calc windspeed
   windspeedmph = get_wind_speed(); //This is calculated in the main loop
 
-  //Calc windgustmph
-  //Calc windgustdir
-  //Report the largest windgust today
-  //windgustmph = 0;
-  //windgustdir = 0;
-/*
-  //Calc windspdmph_avg2m
-  float temp = 0;
-  for(int i = 0 ; i < 120 ; i++)
-    temp += windspdavg[i];
-  temp /= 120.0;
-  windspdmph_avg2m = temp;
-
-  //Calc winddir_avg2m
-  temp = 0; //Can't use winddir_avg2m because it's an int
-  for(int i = 0 ; i < 120 ; i++)
-    temp += winddiravg[i];
-  temp /= 120;
-  winddir_avg2m = temp;
-
-  //Calc windgustmph_10m
-  //Calc windgustdir_10m
-  //Find the largest windgust in the last 10 minutes
-  windgustmph_10m = 0;
-  windgustdir_10m = 0;
-  //Step through the 10 minutes
-  for(int i = 0; i < 10 ; i++)
-  {
-    if(windgust_10m[i] > windgustmph_10m)
-    {
-      windgustmph_10m = windgust_10m[i];
-      windgustdir_10m = windgustdirection_10m[i];
-    }
-  }*/
   int chk = mySensor.read();
   //Calc humidity
   humidity = mySensor.getHumidity();
-  //float temp_h = myHumidity.readTemperature();
-  //Serial.print(" TempH:");
-  //Serial.print(temp_h, 2);
-
-  //Calc tempf from pressure sensor
-  //tempf = myPressure.readTempF();
-  //Serial.print(" TempP:");
-  //Serial.print(tempf, 2);
 
   //tempf = mySensor.getTemperature();
   tempf = ((mySensor.getTemperature() * 1.8) + 32);
@@ -434,27 +342,9 @@ void calcWeather()
 
   //Calc dewptf
 
-  //Calc light level
-  light_lvl = get_light_level();
-
   //Calc battery level
   batt_lvl = get_battery_level();
 
-}
-
-//Returns the voltage of the light sensor based on the 3.3V rail
-//This allows us to ignore what VCC might be (an Arduino plugged into USB has VCC of 4.5 to 5.2V)
-float get_light_level()
-{
-  float operatingVoltage = analogRead(REFERENCE_3V3);
-
-  float lightSensor = analogRead(LIGHT);
-
-  operatingVoltage = 3.3 / operatingVoltage; //The reference voltage is 3.3V
-
-  lightSensor = operatingVoltage * lightSensor;
-
-  return(lightSensor);
 }
 
 //Returns the voltage of the raw pin based on the 3.3V rail
@@ -529,116 +419,4 @@ int get_wind_direction()
   if (adc < 967) return (315);
   if (adc < 990) return (270);
   return (0); // error, disconnected?
-}
-
-
-//Prints the various variables directly to the port
-//I don't like the way this function is written but Arduino doesn't support floats under sprintf
-void printWeather()
-{
-  calcWeather(); //Go calc all the various sensors
-  char sz[32];
-
-  //Serial.print("$,winddir=");
-  //Serial.print(winddir);
-  sprintf(sz, "%d", winddir);
-  client.publish("weather/winddir",sz);
-
-  //Serial.print(",windspeedmph=");
-  //Serial.print(windspeedmph, 1);
-  //sprintf(sz, "%02d", windspeedmph);
-  dtostrf(windspeedmph, 4, 2, sz);
-  client.publish("weather/windspeedmph",sz);
-
-  /*Serial.print(",windgustmph=");
-  Serial.print(windgustmph, 1);
-  Serial.print(",windgustdir=");
-  Serial.print(windgustdir);
-  Serial.print(",windspdmph_avg2m=");
-  Serial.print(windspdmph_avg2m, 1);
-  Serial.print(",winddir_avg2m=");
-  Serial.print(winddir_avg2m);
-  Serial.print(",windgustmph_10m=");
-  Serial.print(windgustmph_10m, 1);
-  Serial.print(",windgustdir_10m=");
-  Serial.print(windgustdir_10m);*/
-  //Serial.print(",humidity=");
-  //Serial.print(humidity, 1);
-  //sprintf(sz, "%02d", humidity);
-  dtostrf(humidity, 4, 2, sz);
-  client.publish("weather/humidity",sz);
-
-  //Serial.print(",tempf=");
-  //Serial.print(tempf, 1);
-  //sprintf(sz, "%02d", tempf);
-  dtostrf(tempf, 4, 2, sz);
-  client.publish("weather/tempf",sz);
-
-  //Serial.print(",rainin=");
-  //Serial.print(rainin, 2);
-  //sprintf(sz, "%02d", rainin);
-  dtostrf(rainin, 4, 2, sz);
-  client.publish("weather/rainin",sz);
-
-  //Serial.print(",dailyrainin=");
-  //Serial.print(dailyrainin, 2);
-  //sprintf(sz, "%02d", dailyrainin);
-  dtostrf(dailyrainin, 4, 2, sz);
-  client.publish("weather/dailyrainin",sz);
-
-  //Serial.print(",pressure=");
-  //Serial.print(pressure, 2);
-  //sprintf(sz, "%02d", pressure);
-
-  float lightning_DistMiles = ((float)lightning_DistKM / 1.609);
-  dtostrf(lightning_DistMiles, 4, 2, sz);
-  client.publish("weather/lightning",sz);
-
-  //Serial.print(",batt_lvl=");
-  //Serial.print(batt_lvl, 2);
-  //sprintf(sz, "%02d", batt_lvl);
-  dtostrf(batt_lvl, 4, 2, sz);
-  client.publish("weather/batt_lvl",sz);
-
-  //Serial.print(",light_lvl=");
-  //Serial.print(light_lvl, 2);
-  //sprintf(sz, "%02d", light_lvl);
-  dtostrf(light_lvl, 4, 2, sz);
-  client.publish("weather/light_lvl",sz);
-
-  //Serial.print(",lat=");
-  //Serial.print(gps.location.lat(), 6);
-  //sprintf(sz, "%06d", gps.location.lat());
-  dtostrf(gps.location.lat(), 4, 6, sz);
-  client.publish("weather/lat",sz);
-
-  //Serial.print(",lat=");
-  //Serial.print(gps.location.lng(), 6);
-  //sprintf(sz, "%06d", gps.location.lng());
-  dtostrf(gps.location.lng(), 4, 6, sz);
-  client.publish("weather/lng",sz);
-
-  //Serial.print(",altitude=");
-  //Serial.print(gps.altitude.meters());
-  //sprintf(sz, "%02d", winddir);
-  dtostrf(gps.altitude.feet(), 4, 2, sz);
-  client.publish("weather/altitude",sz);
-
-  //Serial.print(",sats=");
-  //Serial.print(gps.satellites.value());
-  client.publish("weather/sats",gps.satellites.value());
-
-  //Serial.print(",date=");
-  sprintf(sz, "%02d/%02d/%02d", gps.date.month(), gps.date.day(), gps.date.year());
-  //Serial.print(sz);
-  client.publish("weather/date",sz);
-
-  //Serial.print(",time=");
-  sprintf(sz, "%02d:%02d:%02d", gps.time.hour(), gps.time.minute(), gps.time.second());
-  //Serial.print(sz);
-  client.publish("weather/time",sz);
-
-  //Serial.print(",");
-  //Serial.println("#");
-
 }
