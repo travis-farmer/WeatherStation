@@ -36,8 +36,8 @@ TinyGPSPlus gps;
 #include <Ethernet.h>
 #include <PubSubClient.h>
 
-#include <Wire.h>
-#include "SparkFun_AS3935.h"
+//#include <Wire.h>
+//#include "SparkFun_AS3935.h"
 
 // 0x03 is default, but the address can also be 0x02, 0x01.
 // Adjust the address jumpers on the underside of the product.
@@ -48,7 +48,7 @@ TinyGPSPlus gps;
 #define DISTURBER_INT 0x04
 #define NOISE_INT 0x01
 
-SparkFun_AS3935 lightning(AS3935_ADDR);
+//SparkFun_AS3935 lightning(AS3935_ADDR);
 
 // Interrupt pin for lightning detection
 const int lightningInt = 23;
@@ -62,7 +62,7 @@ int disturber = 2; // Value between 1-10
 
 // Update these with values suitable for your hardware/network.
 byte mac[]    = {  0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xEE };
-IPAddress server(192, 168, 1, 171);
+IPAddress server(192, 168, 1, 197);
 IPAddress ip(192, 168, 1, 29);
 IPAddress myDns(192, 168, 1, 1);
 static const int RXPin = 5, TXPin = 4; //GPS is attached to pin 4(TX from GPS) and pin 5(RX into GPS)
@@ -271,7 +271,7 @@ void setup()
 
   //Serial.println("Weather Shield online!");
 // When lightning is detected the interrupt pin goes HIGH.
-  pinMode(lightningInt, INPUT);
+  //pinMode(lightningInt, INPUT);
   //Wire.begin();
   //lightning.begin();
 }
@@ -343,12 +343,12 @@ void loop()
 
   }
 
-  if(digitalRead(lightningInt) == HIGH){
-    intVal = lightning.readInterruptReg();
-    if(intVal == LIGHTNING_INT){
-      lightning_DistKM = lightning.distanceToStorm();
-    }
-  }
+  //if(digitalRead(lightningInt) == HIGH){
+    //intVal = lightning.readInterruptReg();
+    //if(intVal == LIGHTNING_INT){
+      //lightning_DistKM = lightning.distanceToStorm();
+    //}
+  //}
 
   smartdelay(800); //Wait 1 second, and gather GPS data
 
