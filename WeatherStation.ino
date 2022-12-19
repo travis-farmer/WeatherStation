@@ -62,7 +62,7 @@ int disturber = 2; // Value between 1-10
 
 // Update these with values suitable for your hardware/network.
 byte mac[]    = {  0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xEE };
-IPAddress server(192, 168, 0, 211);
+IPAddress server(10, 150, 86, 185);
 IPAddress ip(192, 168, 0, 29);
 IPAddress myDns(192, 168, 0, 1);
 static const int RXPin = 5, TXPin = 4; //GPS is attached to pin 4(TX from GPS) and pin 5(RX into GPS)
