@@ -62,7 +62,7 @@ int disturber = 2; // Value between 1-10
 
 // Update these with values suitable for your hardware/network.
 byte mac[]    = {  0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xEE };
-IPAddress server(10, 150, 86, 199);
+IPAddress server(192, 168, 1, 100);
 IPAddress ip(192, 168, 0, 29);
 IPAddress myDns(192, 168, 0, 1);
 static const int RXPin = 5, TXPin = 4; //GPS is attached to pin 4(TX from GPS) and pin 5(RX into GPS)
@@ -205,7 +205,7 @@ PubSubClient client(eClient);
 long lastReconnectAttempt = 0;
 
 boolean reconnect() {
-  if (client.connect("arduinoClient", "mqtt_devices", "10994036")) {
+  if (client.connect("ArduinoWS")) {
     // Once connected, publish an announcement...
     // client.publish("test/outTopic","testing");
     // ... and resubscribe
