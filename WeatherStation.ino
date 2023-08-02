@@ -538,7 +538,7 @@ void printWeather()
 {
   calcWeather(); //Go calc all the various sensors
   char sz[32];
-
+  
   //Serial.print("$,winddir=");
   //Serial.print(winddir);
   sprintf(sz, "%d", winddir);
