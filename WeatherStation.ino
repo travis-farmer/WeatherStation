@@ -48,18 +48,6 @@ TinyGPSPlus gps;
 #define DISTURBER_INT 0x04
 #define NOISE_INT 0x01
 
-//SparkFun_AS3935 lightning(AS3935_ADDR);
-
-// Interrupt pin for lightning detection
-const int lightningInt = 23;
-
-// This variable holds the number representing the lightning or non-lightning
-// event issued by the lightning detector.
-int intVal = 0;
-int noise = 2; // Value between 1-7
-int disturber = 2; // Value between 1-10
-
-
 // Update these with values suitable for your hardware/network.
 byte mac[]    = {  0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xEE };
 IPAddress server(192, 168, 1, 100);
@@ -132,7 +120,6 @@ float pressure = 0.0;
 
 float batt_lvl = 11.8; //[analog value from 0 to 1023]
 float light_lvl = 455; //[analog value from 0 to 1023]
-int lightning_DistKM = 0;
 
 //Variables used for GPS
 //float flat, flon; // 39.015024 -102.283608686
