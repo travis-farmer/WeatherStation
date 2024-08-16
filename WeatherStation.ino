@@ -577,10 +577,6 @@ void printWeather()
   //Serial.print(pressure, 2);
   //sprintf(sz, "%02d", pressure);
 
-  float lightning_DistMiles = ((float)lightning_DistKM / 1.609);
-  dtostrf(lightning_DistMiles, 4, 2, sz);
-  client.publish("weather/lightning",sz);
-
   //Serial.print(",batt_lvl=");
   //Serial.print(batt_lvl, 2);
   //sprintf(sz, "%02d", batt_lvl);
