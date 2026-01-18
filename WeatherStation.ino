@@ -69,8 +69,6 @@ Battery Level Sensor - A2
 3.3V Reference - A3
 Status LED 1 - D7
 Status LED 2 - D8
-
-
 */
 
 #define MODBUS_SERIAL Serial1
