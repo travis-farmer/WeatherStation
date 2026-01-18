@@ -25,7 +25,8 @@
 
  01/18/2026 - Travis Farmer
  Modified for use as a Modbus RTU Slave device to report weather data over Modbus RTU protocol.
-
+ Removed the GP-735 GPS module code.
+ 
  */
 
  /*
