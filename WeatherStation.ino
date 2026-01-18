@@ -22,41 +22,60 @@
 
  11/19/2017 - Travis Farmer
  added code for DS18B20 for extendid range temp, WiFi, MQQT.
+
+ 01/18/2026 - Travis Farmer
+ Modified for use as a Modbus RTU Slave device to report weather data over Modbus RTU protocol.
+
  */
 
+ /*
+Address Allocation
+------------------
+Modbus = 4
+Baud = 9600
+dePin = 23
+UART = Serial1
 
-#include <SoftwareSerial.h> //Needed for GPS
-#include <TinyGPS++.h> //GPS parsing - Available through the Library Manager.
+Coils
+-----
+0x00 - Not Used
+
+DiscreteInputs
+--------------
+0x00 - Not Used
+
+HoldingRegisters
+----------------
+0x00 - Not Used
+
+InputRegisters
+--------------
+0x00 - Wind Direction (degrees * 100)
+0x01 - Wind Speed (mph * 100)
+0x02 - Humidity (% * 100)
+0x03 - Temperature (F * 100)
+0x04 - Rain in last hour (inches * 100)
+0x05 - Daily Rain (inches * 100)
+0x06 - Battery Level (volts * 100)
+0x07 - Light Level (volts * 100)
+
+*/
+
+#define MODBUS_SERIAL Serial1
+
 #include <dhtnew.h>
 
 DHTNEW mySensor(22);
-TinyGPSPlus gps;
 
-#include <SPI.h>
-#include <Ethernet.h>
-#include <PubSubClient.h>
+#include <ModbusRTUSlave.h>
 
-//#include <Wire.h>
-//#include "SparkFun_AS3935.h"
+const uint8_t dePin = 23;
+ModbusRTUSlave modbus(MODBUS_SERIAL, dePin); // serial port, driver enable pin for rs-485 (optional)
 
-// 0x03 is default, but the address can also be 0x02, 0x01.
-// Adjust the address jumpers on the underside of the product.
-#define AS3935_ADDR 0x03
-#define INDOOR 0x12
-#define OUTDOOR 0xE
-#define LIGHTNING_INT 0x08
-#define DISTURBER_INT 0x04
-#define NOISE_INT 0x01
-
-// Update these with values suitable for your hardware/network.
-byte mac[]    = {  0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xEE };
-IPAddress server(192, 168, 1, 100);
-IPAddress ip(192, 168, 0, 29);
-IPAddress myDns(192, 168, 0, 1);
-static const int RXPin = 5, TXPin = 4; //GPS is attached to pin 4(TX from GPS) and pin 5(RX into GPS)
-SoftwareSerial ss(RXPin, TXPin);
-
-
+bool coils[1];
+bool discreteInputs[1];
+uint16_t holdingRegisters[1];
+uint16_t inputRegisters[8];
 
 //Hardware pin definitions
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -114,18 +133,9 @@ float humidity = 0.0; // [%]
 float tempf = 0.0; // [temperature F]
 float rainin = 0.0; // [rain inches over the past hour)] -- the accumulated rainfall in the past 60 min
 volatile float dailyrainin = 0.0; // [rain inches so far today in local time]
-//float baromin = 30.03;// [barom in] - It's hard to calculate baromin locally, do this in the agent
-float pressure = 0.0;
-//float dewptf; // [dewpoint F] - It's hard to calculate dewpoint locally, do this in the agent
 
 float batt_lvl = 11.8; //[analog value from 0 to 1023]
 float light_lvl = 455; //[analog value from 0 to 1023]
-
-//Variables used for GPS
-//float flat, flon; // 39.015024 -102.283608686
-//unsigned long age;
-//int year;
-//byte month, day, hour, minute, second, hundredths;
 
 // volatiles are subject to modification by IRQs
 volatile unsigned long raintime, rainlast, raininterval, rain;
@@ -161,83 +171,20 @@ void wspeedIRQ()
 }
 
 
-void errorProc(int errorNum) {
-  unsigned long lastErrorTim = 0UL;
-  int delayON = (((1000 - 750) / errorNum) / 2);
-  while(1) {
-    digitalWrite(STAT1,LOW);
-    delay(250);
-    for (int i=0; i < errorNum; i++) {
-      digitalWrite(STAT1,HIGH);
-      delay(delayON);
-      digitalWrite(STAT1,LOW);
-      delay(delayON);
-    }
-  }
-}
-
-void callback(char* topic, char* payload, unsigned int length) {
-  //Serial.print(topic);
-  //Serial.print(":");
-  for (int i=0; i< length; i++) {
-    //Serial.print(payload[i]);
-  }
-  //Serial.print(":");
-  //Serial.println(length);
-}
-
-EthernetClient eClient;
-PubSubClient client(eClient);
-
-long lastReconnectAttempt = 0;
-
-boolean reconnect() {
-  if (client.connect("ArduinoWS")) {
-    // Once connected, publish an announcement...
-    // client.publish("test/outTopic","testing");
-    // ... and resubscribe
-    // client.subscribe("generator/Monitor/Platform_Stats/System_Uptime");
-    printWeather();
-
-  }
-  return client.connected();
-}
-
 void setup()
 {
   //Serial.begin (9600);
   pinMode(STAT1, OUTPUT); //Status LED Blue
   pinMode(STAT2, OUTPUT); //Status LED Green
-  digitalWrite(STAT1, LOW);
+  digitalWrite(STAT1, HIGH);
   digitalWrite(STAT2, LOW);
-  client.setServer(server, 1883);
-  client.setCallback(callback);
- //Serial.println("Initialize Ethernet with DHCP:");
-  if (Ethernet.begin(mac) == 0) {
-    //Serial.println("Failed to configure Ethernet using DHCP");
-    // Check for Ethernet hardware present
-    if (Ethernet.hardwareStatus() == EthernetNoHardware) {
-      //Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
-      errorProc(1);
-    }
-    if (Ethernet.linkStatus() == LinkOFF) {
-      //Serial.println("Ethernet cable is not connected.");
-      errorProc(2);
-    }
-    // try to congifure using IP address instead of DHCP:
-    Ethernet.begin(mac, ip, myDns);
-  } else {
-    //Serial.print("  DHCP assigned IP ");
-    //Serial.println(Ethernet.localIP());
-  }
-  delay(1500);
-  lastReconnectAttempt = 0;
 
-  ss.begin(9600); //Begin listening to GPS over software serial at 9600. This should be the default baud of the module.
-
-
-  pinMode(GPS_PWRCTL, OUTPUT);
-  digitalWrite(GPS_PWRCTL, HIGH); //Pulling this pin low puts GPS to sleep but maintains RTC and RAM
+  modbus.configureCoils(coils, sizeof(coils));                       // bool array of coil values, number of coils
+  modbus.configureDiscreteInputs(discreteInputs, sizeof(discreteInputs));     // bool array of discrete input values, number of discrete inputs
+  modbus.configureHoldingRegisters(holdingRegisters, sizeof(holdingRegisters)); // unsigned 16 bit integer array of holding register values, number of holding registers
+  modbus.configureInputRegisters(inputRegisters, sizeof(inputRegisters));     // unsigned 16 bit integer array of input register values, number of input registers
+  MODBUS_SERIAL.begin(9600);                     // baud rate
+  modbus.begin(4, 9600); 
 
   pinMode(WSPEED, INPUT_PULLUP); // input from wind meters windspeed sensor
   pinMode(RAIN, INPUT_PULLUP); // input from wind meters rain gauge sensor
@@ -256,104 +203,19 @@ void setup()
   // turn on interrupts
   interrupts();
 
-  //Serial.println("Weather Shield online!");
-// When lightning is detected the interrupt pin goes HIGH.
-  //pinMode(lightningInt, INPUT);
-  //Wire.begin();
-  //lightning.begin();
 }
 
 void loop()
 {
   digitalWrite(STAT2, HIGH);
 
-  if (!client.connected()) {
-    long now = millis();
-    if (now - lastReconnectAttempt > 5000) {
-      lastReconnectAttempt = now;
-      // Attempt to reconnect
-      if (reconnect()) {
-        lastReconnectAttempt = 0;
-      }
-    }
-  } else {
-    // Client connected
+  printWeather();
 
-    client.loop();
-  }
+  modbus.poll();
 
-  //Keep track of which minute it is
-  if(millis() - lastSecond >= 1000)
-  {
-
-    lastSecond += 1000;
-
-    //Take a speed and direction reading every second for 2 minute average
-    if(++seconds_2m > 119) seconds_2m = 0;
-
-    //Calc the wind speed and direction every second for 120 second to get 2 minute average
-    /*float currentSpeed = get_wind_speed();
-    //float currentSpeed = random(5); //For testing
-    int currentDirection = get_wind_direction();
-    windspdavg[seconds_2m] = (int)currentSpeed;
-    winddiravg[seconds_2m] = currentDirection;
-    //if(seconds_2m % 10 == 0) displayArrays(); //For testing
-
-    //Check to see if this is a gust for the minute
-    if(currentSpeed > windgust_10m[minutes_10m])
-    {
-      windgust_10m[minutes_10m] = currentSpeed;
-      windgustdirection_10m[minutes_10m] = currentDirection;
-    }
-
-    //Check to see if this is a gust for the day
-    if(currentSpeed > windgustmph)
-    {
-      windgustmph = currentSpeed;
-      windgustdir = currentDirection;
-    }
-
-    if(++seconds > 59)
-    {
-      seconds = 0;
-
-      if(++minutes > 59) minutes = 0;
-      if(++minutes_10m > 9) minutes_10m = 0;
-
-      rainHour[minutes] = 0; //Zero out this minute's rainfall amount
-      windgust_10m[minutes_10m] = 0; //Zero out this minute's gust
-    }*/
-
-    //Report all readings every second
-    printWeather();
-
-
-  }
-
-  //if(digitalRead(lightningInt) == HIGH){
-    //intVal = lightning.readInterruptReg();
-    //if(intVal == LIGHTNING_INT){
-      //lightning_DistKM = lightning.distanceToStorm();
-    //}
-  //}
-
-  smartdelay(800); //Wait 1 second, and gather GPS data
-
+  digitalWrite(STAT2, LOW);
 
 }
-
-
-//While we delay for a given amount of time, gather GPS data
-static void smartdelay(unsigned long ms)
-{
-  unsigned long start = millis();
-  do
-  {
-    while (ss.available())
-      gps.encode(ss.read());
-  } while (millis() - start < ms);
-}
-
 
 //Calculates each of the variables that wunderground is expecting
 void calcWeather()
@@ -364,51 +226,9 @@ void calcWeather()
   //Calc windspeed
   windspeedmph = get_wind_speed(); //This is calculated in the main loop
 
-  //Calc windgustmph
-  //Calc windgustdir
-  //Report the largest windgust today
-  //windgustmph = 0;
-  //windgustdir = 0;
-/*
-  //Calc windspdmph_avg2m
-  float temp = 0;
-  for(int i = 0 ; i < 120 ; i++)
-    temp += windspdavg[i];
-  temp /= 120.0;
-  windspdmph_avg2m = temp;
-
-  //Calc winddir_avg2m
-  temp = 0; //Can't use winddir_avg2m because it's an int
-  for(int i = 0 ; i < 120 ; i++)
-    temp += winddiravg[i];
-  temp /= 120;
-  winddir_avg2m = temp;
-
-  //Calc windgustmph_10m
-  //Calc windgustdir_10m
-  //Find the largest windgust in the last 10 minutes
-  windgustmph_10m = 0;
-  windgustdir_10m = 0;
-  //Step through the 10 minutes
-  for(int i = 0; i < 10 ; i++)
-  {
-    if(windgust_10m[i] > windgustmph_10m)
-    {
-      windgustmph_10m = windgust_10m[i];
-      windgustdir_10m = windgustdirection_10m[i];
-    }
-  }*/
   int chk = mySensor.read();
   //Calc humidity
   humidity = mySensor.getHumidity();
-  //float temp_h = myHumidity.readTemperature();
-  //Serial.print(" TempH:");
-  //Serial.print(temp_h, 2);
-
-  //Calc tempf from pressure sensor
-  //tempf = myPressure.readTempF();
-  //Serial.print(" TempP:");
-  //Serial.print(tempf, 2);
 
   //tempf = mySensor.getTemperature();
   tempf = ((mySensor.getTemperature() * 1.8) + 32);
@@ -418,8 +238,6 @@ void calcWeather()
   for(int i = 0 ; i < 60 ; i++)
     rainin += rainHour[i];
 
-
-  //Calc dewptf
 
   //Calc light level
   light_lvl = get_light_level();
@@ -478,9 +296,6 @@ float get_wind_speed()
 
   windSpeed *= 1.492; //4 * 1.492 = 5.968MPH
 
-  // Serial.println();
-   //Serial.print("Windspeed:");
-   //Serial.println(windSpeed);
   if (isnan(windSpeed) == true) {
     return(0.00);
   } else {
@@ -519,109 +334,17 @@ int get_wind_direction()
 }
 
 
-//Prints the various variables directly to the port
-//I don't like the way this function is written but Arduino doesn't support floats under sprintf
+//Prints the various variables directly to Modbus input registers
 void printWeather()
 {
   calcWeather(); //Go calc all the various sensors
-  char sz[32];
 
-  //Serial.print("$,winddir=");
-  //Serial.print(winddir);
-  sprintf(sz, "%d", winddir);
-  client.publish("weather/winddir",sz);
-
-  //Serial.print(",windspeedmph=");
-  //Serial.print(windspeedmph, 1);
-  //sprintf(sz, "%02d", windspeedmph);
-  dtostrf(windspeedmph, 4, 2, sz);
-  client.publish("weather/windspeedmph",sz);
-
-  /*Serial.print(",windgustmph=");
-  Serial.print(windgustmph, 1);
-  Serial.print(",windgustdir=");
-  Serial.print(windgustdir);
-  Serial.print(",windspdmph_avg2m=");
-  Serial.print(windspdmph_avg2m, 1);
-  Serial.print(",winddir_avg2m=");
-  Serial.print(winddir_avg2m);
-  Serial.print(",windgustmph_10m=");
-  Serial.print(windgustmph_10m, 1);
-  Serial.print(",windgustdir_10m=");
-  Serial.print(windgustdir_10m);*/
-  //Serial.print(",humidity=");
-  //Serial.print(humidity, 1);
-  //sprintf(sz, "%02d", humidity);
-  dtostrf(humidity, 4, 2, sz);
-  client.publish("weather/humidity",sz);
-
-  //Serial.print(",tempf=");
-  //Serial.print(tempf, 1);
-  //sprintf(sz, "%02d", tempf);
-  dtostrf(tempf, 4, 2, sz);
-  client.publish("weather/tempf",sz);
-
-  //Serial.print(",rainin=");
-  //Serial.print(rainin, 2);
-  //sprintf(sz, "%02d", rainin);
-  dtostrf(rainin, 4, 2, sz);
-  client.publish("weather/rainin",sz);
-
-  //Serial.print(",dailyrainin=");
-  //Serial.print(dailyrainin, 2);
-  //sprintf(sz, "%02d", dailyrainin);
-  dtostrf(dailyrainin, 4, 2, sz);
-  client.publish("weather/dailyrainin",sz);
-
-  //Serial.print(",pressure=");
-  //Serial.print(pressure, 2);
-  //sprintf(sz, "%02d", pressure);
-
-  //Serial.print(",batt_lvl=");
-  //Serial.print(batt_lvl, 2);
-  //sprintf(sz, "%02d", batt_lvl);
-  dtostrf(batt_lvl, 4, 2, sz);
-  client.publish("weather/batt_lvl",sz);
-
-  //Serial.print(",light_lvl=");
-  //Serial.print(light_lvl, 2);
-  //sprintf(sz, "%02d", light_lvl);
-  dtostrf(light_lvl, 4, 2, sz);
-  client.publish("weather/light_lvl",sz);
-
-  //Serial.print(",lat=");
-  //Serial.print(gps.location.lat(), 6);
-  //sprintf(sz, "%06d", gps.location.lat());
-  dtostrf(gps.location.lat(), 4, 6, sz);
-  client.publish("weather/lat",sz);
-
-  //Serial.print(",lat=");
-  //Serial.print(gps.location.lng(), 6);
-  //sprintf(sz, "%06d", gps.location.lng());
-  dtostrf(gps.location.lng(), 4, 6, sz);
-  client.publish("weather/lng",sz);
-
-  //Serial.print(",altitude=");
-  //Serial.print(gps.altitude.meters());
-  //sprintf(sz, "%02d", winddir);
-  dtostrf(gps.altitude.feet(), 4, 2, sz);
-  client.publish("weather/altitude",sz);
-
-  //Serial.print(",sats=");
-  //Serial.print(gps.satellites.value());
-  client.publish("weather/sats",gps.satellites.value());
-
-  //Serial.print(",date=");
-  sprintf(sz, "%02d/%02d/%02d", gps.date.month(), gps.date.day(), gps.date.year());
-  //Serial.print(sz);
-  client.publish("weather/date",sz);
-
-  //Serial.print(",time=");
-  sprintf(sz, "%02d:%02d:%02d", gps.time.hour(), gps.time.minute(), gps.time.second());
-  //Serial.print(sz);
-  client.publish("weather/time",sz);
-
-  //Serial.print(",");
-  //Serial.println("#");
-
+  inputRegisters[0] = (uint16_t)(winddir * 100);
+  inputRegisters[1] = (uint16_t)(windspeedmph * 100);
+  inputRegisters[2] = (uint16_t)(humidity * 100);
+  inputRegisters[3] = (uint16_t)(tempf * 100);
+  inputRegisters[4] = (uint16_t)(rainin * 100);
+  inputRegisters[5] = (uint16_t)(dailyrainin * 100);
+  inputRegisters[6] = (uint16_t)(batt_lvl * 100);
+  inputRegisters[7] = (uint16_t)(light_lvl * 100);
 }
