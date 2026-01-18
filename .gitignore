@@ -1,1 +1,12 @@
-
+Release/*
+.ino.cpp
+.pioenvs
+.piolibdeps
+.clang_complete
+.gcc-flags.json
+.pio/
+.vscode/
+compile_commands.json
+_build
+venv
+.DS_Store
