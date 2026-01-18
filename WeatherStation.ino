@@ -59,6 +59,18 @@ InputRegisters
 0x06 - Battery Level (volts * 100)
 0x07 - Light Level (volts * 100)
 
+Hardware Pin Map
+-----------------
+Wind Speed Sensor - D3 (Interrupt 1)
+Rain Gauge Sensor - D2 (Interrupt 0)
+Wind Direction Sensor - A0
+Light Sensor - A1
+Battery Level Sensor - A2
+3.3V Reference - A3
+Status LED 1 - D7
+Status LED 2 - D8
+
+
 */
 
 #define MODBUS_SERIAL Serial1
@@ -84,7 +96,6 @@ const byte WSPEED = 3;
 const byte RAIN = 2;
 const byte STAT1 = 7;
 const byte STAT2 = 8;
-const byte GPS_PWRCTL = 6; //Pulling this pin low puts GPS to sleep but maintains RTC and RAM
 
 // analog I/O pins
 const byte REFERENCE_3V3 = A3;
