@@ -1,9 +1,7 @@
 # WeatherStation
 
 Weather Shield Example
-
 By: Nathan Seidle
-
 SparkFun Electronics
 
 Date: November 16th, 2013
