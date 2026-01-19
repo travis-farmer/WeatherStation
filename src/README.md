@@ -34,8 +34,8 @@ Modified for use as a Modbus RTU Slave device to report weather data over Modbus
 Removed the GP-735 GPS module code.
 
 
-Address Allocation
-------------------
+Modbus Allocation
+=================
 Modbus = 4
 
 Baud = 115200
