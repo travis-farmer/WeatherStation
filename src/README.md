@@ -18,10 +18,9 @@ Measurements are reported once a second but windspeed and rain gauge are tied to
 
 This example code assumes the GP-735 GPS module is attached.
 
-Updated by Joel Bartlett
 
-03/02/2017
-
+03/02/2017 - Joel Bartlett
+--------------------------
 Removed HTU21D code and replaced with Si7021
 
 11/19/2017 - Travis Farmer
