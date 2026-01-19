@@ -1,7 +1,9 @@
 # WeatherStation
 
 Weather Shield Example
+
 By: Nathan Seidle
+
 SparkFun Electronics
 
 Date: November 16th, 2013
@@ -33,7 +35,7 @@ Modified for use as a Modbus RTU Slave device to report weather data over Modbus
 Removed the GP-735 GPS module code.
 
 
-#Address Allocation
+##Address Allocation
 
 Modbus = 4
 
@@ -49,19 +51,19 @@ dePin = 23
 
 UART = Serial1
 
-#Coils
+##Coils
 
 0x00 - Not Used
 
-#DiscreteInputs
+##DiscreteInputs
 
 0x00 - Not Used
 
-#HoldingRegisters
+##HoldingRegisters
 
 0x00 - Not Used
 
-#InputRegisters
+##InputRegisters
 
 0x00 - Wind Direction (degrees * 100)
 
@@ -79,7 +81,7 @@ UART = Serial1
 
 0x07 - Light Level (volts * 100)
 
-#Hardware Pin Map
+##Hardware Pin Map
 
 Wind Speed Sensor - D3 (Interrupt 1)
 
