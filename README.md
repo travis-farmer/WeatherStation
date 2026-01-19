@@ -33,6 +33,9 @@ Modified for use as a Modbus RTU Slave device to report weather data over Modbus
 
 Removed the GP-735 GPS module code.
 
+01/19/2026 - Travis Farmer
+--------------------------
+Modified for VScode - PlatformIO, rather than Arduino IDE.
 
 Modbus Allocation
 =================
