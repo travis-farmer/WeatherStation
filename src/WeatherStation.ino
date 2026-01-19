@@ -33,7 +33,10 @@
 Address Allocation
 ------------------
 Modbus = 4
-Baud = 9600
+Baud = 115200
+Data Bits = 8
+Parity = None
+Stop Bits = 1
 dePin = 23
 UART = Serial1
 
@@ -71,7 +74,7 @@ Battery Level Sensor - A2
 Status LED 1 - D7
 Status LED 2 - D8
 */
-
+#define DEBUG
 #define MODBUS_SERIAL Serial1
 
 #include <dhtnew.h>
@@ -147,6 +150,7 @@ volatile float dailyrainin = 0.0; // [rain inches so far today in local time]
 float batt_lvl = 11.8; //[analog value from 0 to 1023]
 float light_lvl = 455; //[analog value from 0 to 1023]
 
+unsigned long temp_timer = 0UL;
 // volatiles are subject to modification by IRQs
 volatile unsigned long raintime, rainlast, raininterval, rain;
 
@@ -183,7 +187,10 @@ void wspeedIRQ()
 
 void setup()
 {
-  //Serial.begin (9600);
+  #ifdef DEBUG
+    Serial.begin(115200);
+  #endif
+  
   pinMode(STAT1, OUTPUT); //Status LED Blue
   pinMode(STAT2, OUTPUT); //Status LED Green
   digitalWrite(STAT1, HIGH);
@@ -193,8 +200,8 @@ void setup()
   modbus.configureDiscreteInputs(discreteInputs, sizeof(discreteInputs));     // bool array of discrete input values, number of discrete inputs
   modbus.configureHoldingRegisters(holdingRegisters, sizeof(holdingRegisters)); // unsigned 16 bit integer array of holding register values, number of holding registers
   modbus.configureInputRegisters(inputRegisters, sizeof(inputRegisters));     // unsigned 16 bit integer array of input register values, number of input registers
-  MODBUS_SERIAL.begin(9600);                     // baud rate
-  modbus.begin(4, 9600); 
+  MODBUS_SERIAL.begin(115200);                     // baud rate
+  modbus.begin(4, 115200); 
 
   pinMode(WSPEED, INPUT_PULLUP); // input from wind meters windspeed sensor
   pinMode(RAIN, INPUT_PULLUP); // input from wind meters rain gauge sensor
@@ -217,6 +224,11 @@ void setup()
 
 void loop()
 {
+  if (digitalRead(dePin) == HIGH) {
+    digitalWrite(STAT1, LOW);
+  } else {
+    digitalWrite(STAT1, HIGH);
+  }
   digitalWrite(STAT2, HIGH);
 
   printWeather();
@@ -224,36 +236,6 @@ void loop()
   modbus.poll();
 
   digitalWrite(STAT2, LOW);
-
-}
-
-//Calculates each of the variables that wunderground is expecting
-void calcWeather()
-{
-  //Calc winddir
-  winddir = get_wind_direction();
-
-  //Calc windspeed
-  windspeedmph = get_wind_speed(); //This is calculated in the main loop
-
-  int chk = mySensor.read();
-  //Calc humidity
-  humidity = mySensor.getHumidity();
-
-  //tempf = mySensor.getTemperature();
-  tempf = ((mySensor.getTemperature() * 1.8) + 32);
-  //Total rainfall for the day is calculated within the interrupt
-  //Calculate amount of rainfall for the last 60 minutes
-  rainin = 0;
-  for(int i = 0 ; i < 60 ; i++)
-    rainin += rainHour[i];
-
-
-  //Calc light level
-  light_lvl = get_light_level();
-
-  //Calc battery level
-  batt_lvl = get_battery_level();
 
 }
 
@@ -347,7 +329,36 @@ int get_wind_direction()
 //Prints the various variables directly to Modbus input registers
 void printWeather()
 {
-  calcWeather(); //Go calc all the various sensors
+  //Calc winddir
+  winddir = get_wind_direction();
+
+  //Calc windspeed
+  windspeedmph = get_wind_speed(); //This is calculated in the main loop
+
+  if (millis() - temp_timer > 2000UL)
+  {
+    temp_timer = millis();
+    int chk = mySensor.read();
+    //Calc humidity
+    float tmp_humidity = mySensor.getHumidity();
+    float tmp_tempf = ((mySensor.getTemperature() * 1.8) + 32);
+    if (tmp_humidity > 0 && tmp_tempf > -100) {
+      humidity = tmp_humidity;
+      tempf = tmp_tempf;
+    }
+  }
+  //Total rainfall for the day is calculated within the interrupt
+  //Calculate amount of rainfall for the last 60 minutes
+  rainin = 0;
+  for(int i = 0 ; i < 60 ; i++)
+    rainin += rainHour[i];
+
+
+  //Calc light level
+  light_lvl = get_light_level();
+
+  //Calc battery level
+  batt_lvl = get_battery_level();
 
   inputRegisters[0] = (uint16_t)(winddir * 100);
   inputRegisters[1] = (uint16_t)(windspeedmph * 100);
@@ -357,4 +368,22 @@ void printWeather()
   inputRegisters[5] = (uint16_t)(dailyrainin * 100);
   inputRegisters[6] = (uint16_t)(batt_lvl * 100);
   inputRegisters[7] = (uint16_t)(light_lvl * 100);
+  #ifdef DEBUG
+    Serial.print(">Wind_Dir:");
+    Serial.println(winddir);
+    Serial.print(">Wind_Speed:");
+    Serial.println(windspeedmph);
+    Serial.print(">Humidity:");
+    Serial.println(humidity);
+    Serial.print(">Temp_F:");
+    Serial.println(tempf);
+    Serial.print(">Rain_1hr:");
+    Serial.println(rainin);
+    Serial.print(">Daily_Rain:");
+    Serial.println(dailyrainin);
+    Serial.print(">Battery_Volts:");
+    Serial.println(batt_lvl);
+    Serial.print(">Light_Volts:");
+    Serial.println(light_lvl);
+  #endif
 }
